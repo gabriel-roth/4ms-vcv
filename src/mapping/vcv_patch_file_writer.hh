@@ -246,6 +246,7 @@ struct VCVPatchFileWriter {
 		pw.setPatchName(patchName);
 		pw.setPatchDesc(patchDesc);
 		pw.setExpanders(expanders);
+		pw.setExpanderConnections(detectExpanderConnections(engine, moduleData));
 		pw.setCableList(cableData);
 		pw.setParamList(paramData);
 		pw.setSuggestedSamplerateBlocksize(suggested_samplerate, suggested_blocksize);
@@ -368,6 +369,32 @@ struct VCVPatchFileWriter {
 		if (!module || !module->model || !module->model->plugin)
 			return false;
 		return module->model->plugin->slug == "Stoermelder-P1" && module->model->slug == "Glue";
+	}
+
+	// VCV sets leftExpander/rightExpander for every touching pair of modules.
+	// Only export pairs that plausibly communicate: same-plugin neighbors, or
+	// neighbors with expander message buffers allocated on the facing sides.
+	static bool isLikelyExpanderPair(rack::Module *left, rack::Module *right) {
+		if (left->model && right->model && left->model->plugin && left->model->plugin == right->model->plugin)
+			return true;
+		return left->rightExpander.producerMessage || left->rightExpander.consumerMessage ||
+			   right->leftExpander.producerMessage || right->leftExpander.consumerMessage;
+	}
+
+	static std::vector<std::pair<int64_t, int64_t>> detectExpanderConnections(auto *engine,
+																			  std::vector<BrandModule> const &moduleData) {
+		std::vector<std::pair<int64_t, int64_t>> pairs;
+		for (auto const &m : moduleData) {
+			auto *module = engine->getModule(m.id);
+			if (!module || ModuleDirectory::isHubOrExpander(module) || isGlueModule(module))
+				continue;
+			auto *right = module->rightExpander.module;
+			if (!right || ModuleDirectory::isHubOrExpander(right) || isGlueModule(right))
+				continue;
+			if (isLikelyExpanderPair(module, right))
+				pairs.push_back({module->getId(), right->getId()});
+		}
+		return pairs;
 	}
 
 	static void addHubModuleToMapping(auto *module, std::vector<BrandModule> &moduleData) {
